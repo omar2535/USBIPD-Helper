@@ -13,14 +13,22 @@
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
-    <Grid>
-        <ListView x:Name="DevicesListView" SelectionMode="None">
+    <Grid RowDefinitions="Auto,*">
+        <InfoBar x:Name="AdminWarning"
+             IsOpen="False"
+             Severity="Error"
+             Title="Administrator privileges required"
+             Message="Restart USBIPD-Helper as Administrator to bind, attach, or detach devices." />
+
+        <ListView x:Name="DevicesListView"
+              Grid.Row="1"
+              SelectionMode="None">
             <ListView.ItemTemplate>
                 <DataTemplate x:DataType="local:UsbDeviceInfo">
                     <CheckBox IsChecked="{x:Bind IsChecked, Mode=TwoWay}"
-                      Content="{x:Bind Description}"
-                      ToolTipService.ToolTip="{x:Bind ToolTipText}"
-                      Padding="4"/>
+                          Content="{x:Bind Description}"
+                          ToolTipService.ToolTip="{x:Bind ToolTipText}"
+                          Padding="4"/>
                 </DataTemplate>
             </ListView.ItemTemplate>
         </ListView>

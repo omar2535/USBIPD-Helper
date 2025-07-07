@@ -7,7 +7,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using USBIPD_Helper.helpers; // assuming this is where UsbipdHelper is located
+using USBIPD_Helper.Helpers;
 
 // ReSharper disable once CheckNamespace   (keeps XAML namespace simple)
 namespace USBIPD_Helper
@@ -26,6 +26,9 @@ namespace USBIPD_Helper
         {
             if (_initialised) return;                      // first activation only
             _initialised = true;
+
+            // Show warning if not running as admin
+            AdminWarning.IsOpen = !Utils.IsRunningAsAdministrator();
 
             Debug.WriteLine("[MainWindow] Window activated – loading usbipd list…");
             await LoadAndShowDevicesAsync();
