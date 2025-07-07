@@ -1,4 +1,5 @@
-﻿using Microsoft.UI.Xaml;
+﻿using Microsoft.UI;
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using System;
 using System.Collections.Generic;
@@ -9,6 +10,9 @@ using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using USBIPD_Helper.Helpers;
+using Windows.Graphics;
+using WinRT.Interop;
+using Microsoft.UI.Windowing;
 
 // ReSharper disable once CheckNamespace   (keeps XAML namespace simple)
 namespace USBIPD_Helper
@@ -28,6 +32,14 @@ namespace USBIPD_Helper
         {
             if (_initialised) return;                      // first activation only
             _initialised = true;
+
+            // ── Safe to grab AppWindow here ─────────────────────────────
+            IntPtr hwnd = WindowNative.GetWindowHandle(this);
+            WindowId winId = Win32Interop.GetWindowIdFromWindow(hwnd);
+            AppWindow? app = AppWindow.GetFromWindowId(winId);
+
+            if (app is not null)
+                app.Resize(new SizeInt32(1200, 600));    // width, height
 
             // Show warning if not running as admin
             AdminWarning.IsOpen = !Utils.IsRunningAsAdministrator();
@@ -57,6 +69,12 @@ namespace USBIPD_Helper
             {
                 _refreshInProgress = false;
             }
+        }
+
+        // Refresh button
+        private async void RefreshButton_Click(object sender, RoutedEventArgs e)
+        {
+            await RefreshDeviceListAsync();
         }
 
         // Bind / Unbind
