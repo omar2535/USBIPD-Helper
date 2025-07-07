@@ -25,7 +25,11 @@ namespace USBIPD_Helper
         public MainWindow()
         {
             InitializeComponent();
-            Activated += MainWindow_Activated;             // ✅  instead of “Loaded”
+            Activated += MainWindow_Activated;            // Add our own mainwindow handler
+
+            // Shrink every TextBlock that does NOT have an explicit FontSize
+            var tinyText = new Style { TargetType = typeof(TextBlock) };
+            tinyText.Setters.Add(new Setter(TextBlock.FontSizeProperty, 12d));
         }
 
         private async void MainWindow_Activated(object sender, WindowActivatedEventArgs e)
@@ -39,7 +43,7 @@ namespace USBIPD_Helper
             AppWindow? app = AppWindow.GetFromWindowId(winId);
 
             if (app is not null)
-                app.Resize(new SizeInt32(1200, 600));    // width, height
+                app.Resize(new SizeInt32(1200, 900));    // width, height
 
             // Show warning if not running as admin
             AdminWarning.IsOpen = !Utils.IsRunningAsAdministrator();
