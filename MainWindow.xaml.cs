@@ -158,10 +158,14 @@ namespace USBIPD_Helper
         public bool IsAttached => _state.ToLower() == "attached";
         public bool IsBound => IsAttached || _state.ToLower() == "shared";
 
-
         // ── UI helpers ────────────────────────────────────────────────────
         public string BindActionText => IsBound ? "Unbind" : "Bind";
         public string AttachActionText => IsAttached ? "Detach" : "Attach";
+
+        // Additional information
+        public string Detail { get; set; } = "";
+        public bool HasDetail => !string.IsNullOrWhiteSpace(Detail);
+        public Visibility InfoVisibility => HasDetail ? Visibility.Visible : Visibility.Collapsed;
 
         public bool BindEnabled => !IsAttached;          // Can't unbind while attached
         public bool AttachEnabled => IsBound || IsAttached;
@@ -193,9 +197,15 @@ namespace USBIPD_Helper
     // ─── Helper that calls “usbipd list” ────────────────────────────────────
     public static class UsbipdHelper
     {
-        //  BUSID    VID:PID    Description …      State
-        private static readonly Regex _row = new(
-            @"^\s*(\S+)\s+([\dA-Fa-f]{4}:[\dA-Fa-f]{4})\s+(.+?)\s{2,}(\S+)\s*$",
+        // BUSID  VID:PID  Description …  State (can be “Not shared”)
+        private static readonly Regex _mainRow = new(
+            @"^\s*(\S+)\s+([\dA-Fa-f]{4}:[\dA-Fa-f]{4})\s+(.+?)\s{2,}(.+?)\s*$",
+            RegexOptions.Compiled);
+
+        // BUSID  VID:PID  <Device text>  [2+ spaces]  State
+        // ⇒ capture group 3 stops BEFORE the two-space gap
+        private static readonly Regex _uRow = new(
+            @"^\s*(\S+)\s+([\dA-Fa-f]{4}:[\dA-Fa-f]{4})\s+(.+?)\s{2,}.+$",
             RegexOptions.Compiled);
 
         public static Task BindAsync(string bus) => RunUsbipdAsync($"bind --busid {bus}");
@@ -205,6 +215,7 @@ namespace USBIPD_Helper
 
         public static async Task<IReadOnlyList<UsbDeviceInfo>> GetDevicesAsync()
         {
+            // 1️⃣  Run the normal list  ──────────────────────────────────────────
             var psi = new ProcessStartInfo
             {
                 FileName = "usbipd",
@@ -218,12 +229,7 @@ namespace USBIPD_Helper
             using var proc = Process.Start(psi)
                              ?? throw new InvalidOperationException("usbipd not found.");
             string output = await proc.StandardOutput.ReadToEndAsync();
-            string err = await proc.StandardError.ReadToEndAsync();
             await proc.WaitForExitAsync();
-
-            Debug.WriteLine($"[UsbipdHelper] ExitCode {proc.ExitCode}");
-            if (!string.IsNullOrWhiteSpace(err))
-                Debug.WriteLine($"[UsbipdHelper] STDERR: {err.Trim()}");
 
             var devices = new List<UsbDeviceInfo>();
 
@@ -234,28 +240,56 @@ namespace USBIPD_Helper
                     line.StartsWith("BUSID", StringComparison.OrdinalIgnoreCase) ||
                     line.StartsWith("Persisted", StringComparison.OrdinalIgnoreCase) ||
                     line.StartsWith("GUID", StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;   // header / section lines
-                }
-
-                // Split on TWO-OR-MORE spaces →  BUSID | VID:PID | Description | State
-                var parts = Regex.Split(line, @"\s{2,}");
-                if (parts.Length < 4)
-                {
-                    Debug.WriteLine($"[UsbipdHelper] Unparsed (parts<4): {line}");
                     continue;
-                }
 
-                var vp = parts[1].Split(':', 2, StringSplitOptions.RemoveEmptyEntries);
+                var m = _mainRow.Match(line);
+                if (!m.Success) continue;
 
+                var vp = m.Groups[2].Value.Split(':', 2);
                 devices.Add(new UsbDeviceInfo
                 {
-                    BusId = parts[0],
+                    BusId = m.Groups[1].Value,
                     Vid = vp.ElementAtOrDefault(0) ?? "",
                     Pid = vp.ElementAtOrDefault(1) ?? "",
-                    Description = parts[2],
-                    State = parts[3]
+                    Description = m.Groups[3].Value.Trim(),
+                    State = m.Groups[4].Value.Trim()
                 });
+            }
+
+            // Build lookup for merge
+            var byId = devices.ToDictionary(d => d.BusId, d => d);
+
+            // Run “usbipd list -u” and attach Detail  ────────────────────────
+            var psiU = new ProcessStartInfo
+            {
+                FileName = "usbipd",
+                Arguments = "list -u",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using (var procU = Process.Start(psiU)
+                               ?? throw new InvalidOperationException("usbipd not found."))
+            {
+                string outputU = await procU.StandardOutput.ReadToEndAsync();
+                await procU.WaitForExitAsync();
+
+                foreach (var raw in outputU.Split(Environment.NewLine))
+                {
+                    var line = raw.TrimEnd();
+                    if (string.IsNullOrWhiteSpace(line) ||
+                        line.StartsWith("BUSID", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var m = _uRow.Match(line);
+                    if (!m.Success) continue;
+
+                    string bus = m.Groups[1].Value;
+                    if (byId.TryGetValue(bus, out var dev))
+                        dev.Detail = m.Groups[3].Value.Trim();
+                }
             }
 
             return devices;
