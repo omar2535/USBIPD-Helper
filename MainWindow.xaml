@@ -13,22 +13,52 @@
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
-    <Grid RowDefinitions="Auto,*">
+    <Grid RowDefinitions="Auto,Auto,*" Padding="4">
+        <!-- Admin banner -->
         <InfoBar x:Name="AdminWarning"
              IsOpen="False"
              Severity="Error"
              Title="Administrator privileges required"
-             Message="Restart USBIPD-Helper as Administrator to bind, attach, or detach devices." />
+             Message="Restart USBIPD-Helper as Administrator to bind, attach, or detach devices."/>
 
+        <!-- Header (row-1) -->
+        <Grid Grid.Row="1" ColumnDefinitions="80,70,70,*,120,90,90" Padding="0,4,0,8">
+            <TextBlock Text="Bus ID"  FontWeight="Bold"/>
+            <TextBlock Text="VID"     FontWeight="Bold" Grid.Column="1"/>
+            <TextBlock Text="PID"     FontWeight="Bold" Grid.Column="2"/>
+            <TextBlock Text="Device"  FontWeight="Bold" Grid.Column="3"/>
+            <TextBlock Text="State"   FontWeight="Bold" Grid.Column="4"/>
+            <TextBlock Text="Bind"    FontWeight="Bold" Grid.Column="5" HorizontalAlignment="Center"/>
+            <TextBlock Text="Attach"  FontWeight="Bold" Grid.Column="6" HorizontalAlignment="Center"/>
+        </Grid>
+
+        <!-- Data rows (row-2) -->
         <ListView x:Name="DevicesListView"
-              Grid.Row="1"
+              Grid.Row="2"
               SelectionMode="None">
             <ListView.ItemTemplate>
                 <DataTemplate x:DataType="local:UsbDeviceInfo">
-                    <CheckBox IsChecked="{x:Bind IsChecked, Mode=TwoWay}"
-                          Content="{x:Bind Description}"
-                          ToolTipService.ToolTip="{x:Bind ToolTipText}"
-                          Padding="4"/>
+                    <Grid ColumnDefinitions="80,70,70,*,120,90,90" Padding="2">
+                        <TextBlock Text="{x:Bind BusId}"/>
+                        <TextBlock Grid.Column="1" Text="{x:Bind Vid}"/>
+                        <TextBlock Grid.Column="2" Text="{x:Bind Pid}"/>
+                        <TextBlock Grid.Column="3" Text="{x:Bind Description}"/>
+                        <TextBlock Grid.Column="4" Text="{x:Bind State}"/>
+
+                        <!-- Bind / Unbind -->
+                        <Button Grid.Column="5"
+                            Content="{x:Bind BindActionText}"
+                            IsEnabled="{x:Bind BindEnabled}"
+                            Click="BindButton_Click"
+                            Tag="{x:Bind}" />
+
+                        <!-- Attach / Detach -->
+                        <Button Grid.Column="6"
+                            Content="{x:Bind AttachActionText}"
+                            IsEnabled="{x:Bind AttachEnabled}"
+                            Click="AttachButton_Click"
+                            Tag="{x:Bind}" />
+                    </Grid>
                 </DataTemplate>
             </ListView.ItemTemplate>
         </ListView>

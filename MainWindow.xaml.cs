@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -15,6 +16,7 @@ namespace USBIPD_Helper
     public sealed partial class MainWindow : Window
     {
         private bool _initialised;                         // makes sure we run only once
+        private bool _refreshInProgress;
 
         public MainWindow()
         {
@@ -31,95 +33,139 @@ namespace USBIPD_Helper
             AdminWarning.IsOpen = !Utils.IsRunningAsAdministrator();
 
             Debug.WriteLine("[MainWindow] Window activated – loading usbipd list…");
-            await LoadAndShowDevicesAsync();
+            await RefreshDeviceListAsync();
         }
 
         // --------------------------------------------------------------------
-        private async Task LoadAndShowDevicesAsync()
+        private async Task RefreshDeviceListAsync()
         {
+            if (_refreshInProgress) return;             // simple re-entrancy guard
+            _refreshInProgress = true;
+
             try
             {
                 var devices = await UsbipdHelper.GetDevicesAsync();
-                Debug.WriteLine($"[MainWindow] Found {devices.Count} devices:");
-                foreach (var d in devices)
-                    Debug.WriteLine($"  • {d.BusId}  {d.VidPid}  {d.Description}  ({d.State})");
 
+                // Optional: preserve scroll position or selection here
                 DevicesListView.ItemsSource = devices;
-                
-                foreach (var dev in devices)
-                    dev.PropertyChanged += Device_PropertyChanged;
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[MainWindow] ERROR: {ex}");
-                await new ContentDialog
-                {
-                    Title = "usbipd list failed",
-                    Content = ex.Message,
-                    CloseButtonText = "OK",
-                    XamlRoot = Content.XamlRoot
-                }.ShowAsync();
+                Debug.WriteLine($"[MainWindow] Refresh failed: {ex}");
+            }
+            finally
+            {
+                _refreshInProgress = false;
             }
         }
 
-        private async void Device_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+        // Bind / Unbind
+        private async void BindButton_Click(object sender, RoutedEventArgs e)
         {
-            if (e.PropertyName != nameof(UsbDeviceInfo.IsChecked)) return;
+            if (sender is not Button { Tag: UsbDeviceInfo dev }) return;
 
-            var dev = (UsbDeviceInfo)sender!;
             try
             {
-                if (dev.IsChecked)
+                if (dev.IsBound)
                 {
-                    // Ticked  → bind + attach
-                    await UsbipdHelper.BindAndAttachAsync(dev.BusId);
-                    Debug.WriteLine($"[MainWindow] {dev.BusId} attached to WSL.");
+                    await UsbipdHelper.UnbindAsync(dev.BusId);
                 }
                 else
                 {
-                    // Unticked → detach
-                    await UsbipdHelper.DetachAsync(dev.BusId);
-                    Debug.WriteLine($"[MainWindow] {dev.BusId} detached.");
+                    await UsbipdHelper.BindAsync(dev.BusId);
                 }
+                await Task.Delay(1000);
+                await RefreshDeviceListAsync();
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[MainWindow] ERROR with {dev.BusId}: {ex}");
-
-                await new ContentDialog
-                {
-                    Title = $"usbipd error ({dev.BusId})",
-                    Content = ex.Message,
-                    CloseButtonText = "OK",
-                    XamlRoot = Content.XamlRoot
-                }.ShowAsync();
-
-                // Roll the checkbox back so the UI reflects reality
-                dev.PropertyChanged -= Device_PropertyChanged;   // avoid recursion
-                dev.IsChecked = !dev.IsChecked;                  // revert tick
-                dev.PropertyChanged += Device_PropertyChanged;
+                await ShowErrorAsync(dev.BusId, ex);
             }
+        }
+
+        // Attach / Detach
+        private async void AttachButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: UsbDeviceInfo dev }) return;
+
+            try
+            {
+                if (dev.IsAttached)
+                {
+                    await UsbipdHelper.DetachAsync(dev.BusId);
+                }
+                else
+                {
+                    // Auto-bind if needed
+                    if (!dev.IsBound)
+                        await UsbipdHelper.BindAsync(dev.BusId);
+
+                    await UsbipdHelper.AttachAsync(dev.BusId);
+                }
+                await Task.Delay(1000);
+                await RefreshDeviceListAsync();
+            }
+            catch (Exception ex)
+            {
+                await ShowErrorAsync(dev.BusId, ex);
+            }
+        }
+
+        // helper for errors
+        private async Task ShowErrorAsync(string busId, Exception ex)
+        {
+            var dlg = new ContentDialog
+            {
+                Title = $"usbipd error ({busId})",
+                Content = ex.Message,
+                CloseButtonText = "OK",
+                XamlRoot = Content.XamlRoot
+            };
+
+            await dlg.ShowAsync();          // awaits the IAsyncOperation
         }
     }
 
     // ─── Model ─────────────────────────────────────────────────────────────
     public partial class UsbDeviceInfo : INotifyPropertyChanged
     {
-        private bool _isChecked;
-
+        // ── incoming raw fields ────────────────────────────────────────────
+        private string _state = "Not shared";
         public required string BusId { get; init; }
-        public required string VidPid { get; init; }
+        public required string Vid { get; init; }
+        public required string Pid { get; init; }
         public required string Description { get; init; }
-        public required string State { get; init; }
+
+        // ── computed flags ────────────────────────────────────────────────
+        public bool IsAttached => _state.ToLower() == "attached";
+        public bool IsBound => IsAttached || _state.ToLower() == "shared";
 
 
-        public bool IsChecked
+        // ── UI helpers ────────────────────────────────────────────────────
+        public string BindActionText => IsBound ? "Unbind" : "Bind";
+        public string AttachActionText => IsAttached ? "Detach" : "Attach";
+
+        public bool BindEnabled => !IsAttached;          // Can't unbind while attached
+        public bool AttachEnabled => IsBound || IsAttached;
+
+        public string State
         {
-            get => _isChecked;
-            set { if (_isChecked != value) {_isChecked = value; OnPropertyChanged(); Debug.WriteLine("Checked!");  } }
+            get => _state;
+            set
+            {
+                if (_state != value)
+                {
+                    _state = value;
+                    OnPropertyChanged();                 // State
+                    OnPropertyChanged(nameof(IsBound));
+                    OnPropertyChanged(nameof(IsAttached));
+                    OnPropertyChanged(nameof(BindActionText));
+                    OnPropertyChanged(nameof(AttachActionText));
+                    OnPropertyChanged(nameof(BindEnabled));
+                    OnPropertyChanged(nameof(AttachEnabled));
+                }
+            }
         }
-
-        public string ToolTipText => $"{BusId}  ({VidPid})  –  {State}";
 
         public event PropertyChangedEventHandler? PropertyChanged;
         private void OnPropertyChanged([CallerMemberName] string? name = null) =>
@@ -133,6 +179,11 @@ namespace USBIPD_Helper
         private static readonly Regex _row = new(
             @"^\s*(\S+)\s+([\dA-Fa-f]{4}:[\dA-Fa-f]{4})\s+(.+?)\s{2,}(\S+)\s*$",
             RegexOptions.Compiled);
+
+        public static Task BindAsync(string bus) => RunUsbipdAsync($"bind --busid {bus}");
+        public static Task UnbindAsync(string bus) => RunUsbipdAsync($"unbind --busid {bus}");
+        public static Task AttachAsync(string bus) => RunUsbipdAsync($"attach --wsl --busid {bus}");
+        public static Task DetachAsync(string busId) => RunUsbipdAsync($"detach --busid {busId}");
 
         public static async Task<IReadOnlyList<UsbDeviceInfo>> GetDevicesAsync()
         {
@@ -177,12 +228,13 @@ namespace USBIPD_Helper
                     continue;
                 }
 
-                Debug.WriteLine($"[UsbipdHelper] Parsed: [{string.Join("] [", parts)}]");
+                var vp = parts[1].Split(':', 2, StringSplitOptions.RemoveEmptyEntries);
 
                 devices.Add(new UsbDeviceInfo
                 {
                     BusId = parts[0],
-                    VidPid = parts[1],
+                    Vid = vp.ElementAtOrDefault(0) ?? "",
+                    Pid = vp.ElementAtOrDefault(1) ?? "",
                     Description = parts[2],
                     State = parts[3]
                 });
@@ -220,16 +272,5 @@ namespace USBIPD_Helper
                 throw new InvalidOperationException($"usbipd {arguments} failed ({proc.ExitCode})");
         }
 
-        public static Task BindAndAttachAsync(string busId)
-        {
-            return RunUsbipdAsync($"bind --busid {busId}")  // run bind first…
-            .ContinueWith(_ => RunUsbipdAsync($"attach --wsl --busid {busId}")) // …then attach
-            .Unwrap();
-        }
-
-        public static Task DetachAsync(string busId)
-        {
-            return RunUsbipdAsync($"detach --busid {busId}");
-        }
     }
 }
