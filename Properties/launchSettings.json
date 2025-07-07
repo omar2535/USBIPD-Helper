@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "USBIPD-Helper (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "USBIPD-Helper (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
